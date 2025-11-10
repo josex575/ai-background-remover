@@ -11,7 +11,8 @@ st.title("🪄 AI Passport Photo Maker")
 st.markdown("""
 Upload a portrait photo, and the AI will:
 - Remove the background  
-- Center and crop the face (70–80% of frame)  
+- Center and crop the head with 2cm space above  
+- Include neck and shoulders  
 - Replace the background with plain white  
 """)
 
@@ -26,31 +27,44 @@ def detect_face(image: Image.Image):
     faces = face_cascade.detectMultiScale(gray, 1.1, 4)
     if len(faces) == 0:
         return None
-    # Return the largest detected face
-    return max(faces, key=lambda rect: rect[2] * rect[3])
+    return max(faces, key=lambda rect: rect[2] * rect[3])  # largest face
 
 # ---- CROP + ALIGN FUNCTION ----
 def crop_passport_style(image: Image.Image, face_box):
-    """Crops the image so that the head occupies ~75% of frame height."""
+    """Crops the image to include head, neck, and shoulders with 2cm space above head."""
     x, y, w, h = face_box
     np_img = np.array(image)
     img_h, img_w = np_img.shape[:2]
 
-    # Compute desired crop size
-    head_height_target = h / 0.75
-    crop_h = int(head_height_target)
-    crop_w = int(crop_h * 0.8)  # typical passport aspect ratio
+    # Approximate pixels for 2cm above head (depends on resolution, assume 300 dpi)
+    dpi = 300
+    cm2px = dpi / 2.54  # 1 inch = 2.54 cm
+    top_margin = int(2 * cm2px)
 
-    # Center the crop around the face
-    center_x = x + w // 2
-    center_y = y + h // 2
-
-    x1 = max(center_x - crop_w // 2, 0)
-    y1 = max(center_y - crop_h // 2, 0)
-    x2 = min(x1 + crop_w, img_w)
-    y2 = min(y1 + crop_h, img_h)
+    # Expand crop box
+    x1 = max(x - w // 4, 0)                  # wider left margin for shoulders
+    x2 = min(x + w + w // 4, img_w)         # wider right margin for shoulders
+    y1 = max(y - top_margin, 0)             # 2cm above head
+    y2 = min(y + int(h * 2.5), img_h)       # extend downward to include neck/shoulders
 
     cropped = image.crop((x1, y1, x2, y2))
+
+    # Resize to standard passport ratio (4:5)
+    target_ratio = 4 / 5
+    cropped_w, cropped_h = cropped.size
+    current_ratio = cropped_w / cropped_h
+
+    if current_ratio > target_ratio:
+        # too wide → pad height
+        new_h = int(cropped_w / target_ratio)
+        pad_h = new_h - cropped_h
+        cropped = ImageOps.expand(cropped, border=(0, pad_h // 2), fill="white")
+    elif current_ratio < target_ratio:
+        # too tall → pad width
+        new_w = int(cropped_h * target_ratio)
+        pad_w = new_w - cropped_w
+        cropped = ImageOps.expand(cropped, border=(pad_w // 2, 0), fill="white")
+
     return cropped
 
 # ---- BACKGROUND REPLACEMENT ----
