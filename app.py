@@ -1,6 +1,6 @@
 import streamlit as st
 from rembg import remove
-from PIL import Image, ImageOps
+from PIL import Image, ImageOps, ImageFilter
 import numpy as np
 import io
 import cv2
@@ -9,8 +9,8 @@ st.set_page_config(page_title="AI Passport Photo Maker", layout="centered")
 
 st.title("🪄 AI Passport Photo Maker")
 st.markdown("""
-Upload a portrait photo and select the type below.  
-The AI will automatically crop, center, and clean up the background for a passport-ready image.
+Upload a portrait photo and choose the correct options below.  
+The AI will crop, clean, and prepare a passport-style photo (630×810 px).
 """)
 
 # ---- USER OPTIONS ----
@@ -37,10 +37,14 @@ def detect_face(image):
         return None
     return max(faces, key=lambda rect: rect[2] * rect[3])
 
-# ---- CROP FUNCTION ----
+# ---- SMART CROPPING ----
 def crop_based_on_type(image, face_box, photo_type, subject_type):
     """
-    Crops image with different margins based on subject and beard selection.
+    Crops image based on subject type:
+    - Man: normal head + neck
+    - With Beard: adds 2 cm below beard
+    - Woman: looser top/sides to include hair
+    - Baby: extra space around head
     """
     x, y, w, h = face_box
     np_img = np.array(image)
@@ -51,23 +55,30 @@ def crop_based_on_type(image, face_box, photo_type, subject_type):
     cm2px = dpi / 2.54
     top_margin = int(2 * cm2px)
 
-    # Base bottom margin depending on subject type
+    # Subject-specific adjustments
     if subject_type == "Man":
         bottom_margin = int(h * 0.12)
+        side_margin = w // 8
     elif subject_type == "Woman":
-        bottom_margin = int(h * 0.15)
-    else:  # Baby
-        bottom_margin = int(h * 0.25)  # babies have rounder faces and need more bottom space
+        # More space for hair around head
+        top_margin = int(h * 0.6)
+        bottom_margin = int(h * 0.25)
+        side_margin = int(w * 0.25)
+    elif subject_type == "Baby":
+        top_margin = int(h * 0.3)
+        bottom_margin = int(h * 0.25)
+        side_margin = int(w * 0.2)
+    else:
+        bottom_margin = int(h * 0.1)
+        side_margin = w // 8
 
-    # Add extra 2 cm below beard if selected
+    # Add beard margin
     if photo_type == "With Beard":
         bottom_margin += int(2 * cm2px)
 
-    # Horizontal margins (slightly wider than face)
-    x1 = max(x - w // 8, 0)
-    x2 = min(x + w + w // 8, img_w)
-
-    # Vertical margins
+    # Compute crop area
+    x1 = max(x - side_margin, 0)
+    x2 = min(x + w + side_margin, img_w)
     y1 = max(y - top_margin, 0)
     y2 = min(y + h + bottom_margin, img_h)
 
@@ -90,12 +101,21 @@ def crop_based_on_type(image, face_box, photo_type, subject_type):
     return cropped
 
 # ---- BACKGROUND REMOVAL ----
-def replace_background_with_white(image):
-    """Removes background and replaces it with white."""
+def replace_background_with_white(image, subject_type):
+    """
+    Removes background.
+    For women: soften the edges around hair to preserve strands.
+    """
     removed = remove(image)
     np_img = np.array(removed)
+
     if np_img.shape[2] == 4:
         alpha = np_img[:, :, 3]
+
+        # For women → blur alpha to keep soft hair edges
+        if subject_type == "Woman":
+            alpha = cv2.GaussianBlur(alpha, (7, 7), 3)
+
         white_bg = np.ones_like(np_img[:, :, :3]) * 255
         alpha_factor = alpha[:, :, np.newaxis] / 255.0
         composite = white_bg * (1 - alpha_factor) + np_img[:, :, :3] * alpha_factor
@@ -116,10 +136,10 @@ if uploaded:
             face_box = tuple(map(int, face_box))
 
             cropped = crop_based_on_type(image, face_box, photo_type, subject_type)
-            final = replace_background_with_white(cropped)
+            final = replace_background_with_white(cropped, subject_type)
             final = ImageOps.autocontrast(final)
 
-            # Resize final output to 630x810
+            # Resize to passport dimensions
             final = final.resize((630, 810), Image.LANCZOS)
 
             st.image(final, caption=f"✅ {subject_type} ({photo_type}) Passport Photo (630×810 px)", use_container_width=True)
