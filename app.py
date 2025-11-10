@@ -9,20 +9,20 @@ st.set_page_config(page_title="AI Passport Photo Maker", layout="centered")
 
 st.title("🪄 AI Passport Photo Maker")
 st.markdown("""
-Upload a portrait photo, and the AI will:
-- Remove the background  
-- Crop around the head with a small portion of the neck  
-- Leave a 2 cm margin above the head  
-- Leave a 2 cm margin below the beard or chin area  
-- Resize to 630×810 pixels  
-- Replace the background with plain white  
+Upload a portrait photo. The AI will:
+- Remove background  
+- Crop around the head with a small portion of neck  
+- Leave **2 cm above the head**  
+- Detect beards — if present, leave **2 cm extra below the beard**  
+- Resize to **630×810 px**  
+- Replace the background with white  
 """)
 
-uploaded = st.file_uploader("📸 Upload a front-facing portrait photo", type=["jpg", "jpeg", "png"])
+uploaded = st.file_uploader("📸 Upload a clear front-facing portrait photo", type=["jpg", "jpeg", "png"])
 
-# ---- FACE DETECTION FUNCTION ----
+# ---- FACE DETECTION ----
 def detect_face(image):
-    """Detects the largest face in the image and returns bounding box (x, y, w, h)."""
+    """Detects the largest face and returns (x, y, w, h)."""
     np_img = np.array(image.convert("RGB"))
     gray = cv2.cvtColor(np_img, cv2.COLOR_RGB2GRAY)
     face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
@@ -31,48 +31,64 @@ def detect_face(image):
         return None
     return max(faces, key=lambda rect: rect[2] * rect[3])
 
-# ---- CROP FUNCTION (HEAD + SMALL NECK + BEARD SPACE) ----
-def crop_head_beard(image, face_box):
+# ---- BEARD DETECTION ----
+def has_beard(image, face_box):
     """
-    Crops the image to include head and beard, leaving:
-    - ~2 cm space above the head
-    - ~2 cm space below the beard
-    - small portion of neck
+    Heuristic beard detection based on darker lower face region.
+    Returns True if a beard is likely present.
+    """
+    x, y, w, h = face_box
+    np_img = np.array(image.convert("RGB"))
+    gray = cv2.cvtColor(np_img, cv2.COLOR_RGB2GRAY)
+
+    # Define top and bottom face areas
+    face_region = gray[y:y+h, x:x+w]
+    top_half = face_region[: h//2, :]
+    bottom_half = face_region[h//2:, :]
+
+    # Average brightness
+    top_mean = np.mean(top_half)
+    bottom_mean = np.mean(bottom_half)
+
+    # If bottom half is significantly darker → likely beard
+    return bottom_mean < top_mean * 0.8  # 20% darker threshold
+
+# ---- CROP FUNCTION ----
+def crop_face_region(image, face_box, beard=False):
+    """
+    Crops head + neck or head + beard depending on `beard` flag.
+    Leaves 2 cm space above head, 2 cm below beard if applicable.
     """
     x, y, w, h = face_box
     np_img = np.array(image)
     img_h, img_w = np_img.shape[:2]
 
-    # Convert cm → pixels (assuming ~300 dpi)
+    # cm → pixels
     dpi = 300
     cm2px = dpi / 2.54
     top_margin = int(2 * cm2px)
-    bottom_margin = int(2 * cm2px)  # extra 2 cm for beard
+    bottom_margin = int(2 * cm2px) if beard else int(h * 0.1)
 
-    # Horizontal margins (slightly wider than face)
+    # Crop coordinates
     x1 = max(x - w // 8, 0)
     x2 = min(x + w + w // 8, img_w)
-
-    # Vertical margins (include top + beard area)
     y1 = max(y - top_margin, 0)
     y2 = min(y + h + bottom_margin, img_h)
 
     cropped = image.crop((x1, y1, x2, y2))
 
-    # Adjust to 4:5 aspect ratio by padding white
+    # Maintain 4:5 ratio
     target_ratio = 4 / 5
-    cropped_w, cropped_h = cropped.size
-    current_ratio = cropped_w / cropped_h
+    cw, ch = cropped.size
+    ratio = cw / ch
 
-    if current_ratio > target_ratio:
-        # Too wide → pad height
-        new_h = int(cropped_w / target_ratio)
-        pad_h = new_h - cropped_h
+    if ratio > target_ratio:
+        new_h = int(cw / target_ratio)
+        pad_h = new_h - ch
         cropped = ImageOps.expand(cropped, border=(0, pad_h // 2), fill="white")
-    elif current_ratio < target_ratio:
-        # Too tall → pad width
-        new_w = int(cropped_h * target_ratio)
-        pad_w = new_w - cropped_w
+    elif ratio < target_ratio:
+        new_w = int(ch * target_ratio)
+        pad_w = new_w - cw
         cropped = ImageOps.expand(cropped, border=(pad_w // 2, 0), fill="white")
 
     return cropped
@@ -102,22 +118,24 @@ if uploaded:
             st.error("😕 No face detected. Please upload a clear front-facing portrait photo.")
         else:
             face_box = tuple(map(int, face_box))
-            cropped = crop_head_beard(image, face_box)
+
+            beard = has_beard(image, face_box)
+            st.write(f"🧔 Beard detected: **{'Yes' if beard else 'No'}**")
+
+            cropped = crop_face_region(image, face_box, beard=beard)
             final = replace_background_with_white(cropped)
             final = ImageOps.autocontrast(final)
 
-            # Resize final output to 630×810 px
+            # Resize to passport size
             final = final.resize((630, 810), Image.LANCZOS)
 
             st.image(final, caption="✅ Passport-Ready Photo (630×810 px)", use_container_width=True)
 
-            # Download button
             buf = io.BytesIO()
             final.save(buf, format="JPEG", quality=95)
-            byte_im = buf.getvalue()
             st.download_button(
                 label="💾 Download Passport Photo",
-                data=byte_im,
+                data=buf.getvalue(),
                 file_name="passport_photo.jpg",
                 mime="image/jpeg"
             )
