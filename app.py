@@ -13,7 +13,7 @@ Upload a portrait photo, and the AI will:
 - Remove the background  
 - Crop tightly around the head with a small portion of the neck  
 - Leave a small margin above the head (~2 cm)  
-- Maintain passport photo aspect ratio  
+- Resize to 630×810 pixels  
 - Replace the background with plain white  
 """)
 
@@ -34,7 +34,7 @@ def detect_face(image):
 def crop_head_only(image, face_box):
     """
     Crops the image to include only head and a small portion of the neck,
-    leaves small space above the head, centers the head, and maintains 4:5 ratio.
+    leaves small space above the head, centers the head, maintains 4:5 ratio.
     """
     x, y, w, h = face_box
     np_img = np.array(image)
@@ -58,7 +58,7 @@ def crop_head_only(image, face_box):
 
     cropped = image.crop((x1, y1, x2, y2))
 
-    # Resize to passport ratio 4:5 by padding white
+    # Resize to 4:5 ratio by padding white
     target_ratio = 4 / 5
     cropped_w, cropped_h = cropped.size
     current_ratio = cropped_w / cropped_h
@@ -105,7 +105,10 @@ if uploaded:
             final = replace_background_with_white(cropped)
             final = ImageOps.autocontrast(final)
 
-            st.image(final, caption="✅ Passport-Ready Photo", use_container_width=True)
+            # Resize to 630x810 pixels
+            final = final.resize((630, 810), Image.LANCZOS)
+
+            st.image(final, caption="✅ Passport-Ready Photo (630×810 px)", use_container_width=True)
 
             # Download button
             buf = io.BytesIO()
