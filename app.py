@@ -11,8 +11,9 @@ st.title("🪄 AI Passport Photo Maker")
 st.markdown("""
 Upload a portrait photo, and the AI will:
 - Remove the background  
-- Crop tightly around the head with a small portion of the neck  
-- Leave a small margin above the head (~2 cm)  
+- Crop around the head with a small portion of the neck  
+- Leave a 2 cm margin above the head  
+- Leave a 2 cm margin below the beard or chin area  
 - Resize to 630×810 pixels  
 - Replace the background with plain white  
 """)
@@ -30,35 +31,35 @@ def detect_face(image):
         return None
     return max(faces, key=lambda rect: rect[2] * rect[3])
 
-# ---- CROP FUNCTION (HEAD + LITTLE NECK) ----
-def crop_head_only(image, face_box):
+# ---- CROP FUNCTION (HEAD + SMALL NECK + BEARD SPACE) ----
+def crop_head_beard(image, face_box):
     """
-    Crops the image to include only head and a small portion of the neck,
-    leaves small space above the head, centers the head, maintains 4:5 ratio.
+    Crops the image to include head and beard, leaving:
+    - ~2 cm space above the head
+    - ~2 cm space below the beard
+    - small portion of neck
     """
     x, y, w, h = face_box
     np_img = np.array(image)
     img_h, img_w = np_img.shape[:2]
 
-    # Top margin (~2cm in pixels assuming 300dpi)
+    # Convert cm → pixels (assuming ~300 dpi)
     dpi = 300
     cm2px = dpi / 2.54
     top_margin = int(2 * cm2px)
-
-    # Bottom extension (~10% of face height for small neck)
-    bottom_margin = int(h * 0.1)
+    bottom_margin = int(2 * cm2px)  # extra 2 cm for beard
 
     # Horizontal margins (slightly wider than face)
     x1 = max(x - w // 8, 0)
     x2 = min(x + w + w // 8, img_w)
 
-    # Vertical margins
+    # Vertical margins (include top + beard area)
     y1 = max(y - top_margin, 0)
     y2 = min(y + h + bottom_margin, img_h)
 
     cropped = image.crop((x1, y1, x2, y2))
 
-    # Resize to 4:5 ratio by padding white
+    # Adjust to 4:5 aspect ratio by padding white
     target_ratio = 4 / 5
     cropped_w, cropped_h = cropped.size
     current_ratio = cropped_w / cropped_h
@@ -101,11 +102,11 @@ if uploaded:
             st.error("😕 No face detected. Please upload a clear front-facing portrait photo.")
         else:
             face_box = tuple(map(int, face_box))
-            cropped = crop_head_only(image, face_box)
+            cropped = crop_head_beard(image, face_box)
             final = replace_background_with_white(cropped)
             final = ImageOps.autocontrast(final)
 
-            # Resize to 630x810 pixels
+            # Resize final output to 630×810 px
             final = final.resize((630, 810), Image.LANCZOS)
 
             st.image(final, caption="✅ Passport-Ready Photo (630×810 px)", use_container_width=True)
