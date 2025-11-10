@@ -9,13 +9,13 @@ st.set_page_config(page_title="AI Passport Photo Maker", layout="centered")
 
 st.title("🪄 AI Passport Photo Maker")
 st.markdown("""
-Upload a photo, and the AI will:
+Upload a portrait photo, and the AI will:
 - Remove the background  
 - Center and crop the face (70–80% of frame)  
 - Replace the background with plain white  
 """)
 
-uploaded = st.file_uploader("📸 Upload a clear portrait photo", type=["jpg", "jpeg", "png"])
+uploaded = st.file_uploader("📸 Upload a front-facing portrait photo", type=["jpg", "jpeg", "png"])
 
 # ---- FACE DETECTION FUNCTION ----
 def detect_face(image: Image.Image):
@@ -67,22 +67,24 @@ def replace_background_with_white(image: Image.Image):
     else:
         return image
 
+# ---- MAIN APP LOGIC ----
 if uploaded:
     image = Image.open(uploaded)
     st.image(image, caption="Original Photo", use_container_width=True)
 
     with st.spinner("🪄 Processing image..."):
         face_box = detect_face(image)
-        if not face_box:
-            st.error("😕 No face detected. Try uploading a clearer portrait photo.")
+        if face_box is None:
+            st.error("😕 No face detected. Please upload a clear front-facing portrait photo.")
         else:
+            face_box = tuple(map(int, face_box))
             cropped = crop_passport_style(image, face_box)
             final = replace_background_with_white(cropped)
             final = ImageOps.autocontrast(final)
 
             st.image(final, caption="✅ Passport-Ready Photo", use_container_width=True)
 
-            # Download
+            # Download button
             buf = io.BytesIO()
             final.save(buf, format="JPEG", quality=95)
             byte_im = buf.getvalue()
@@ -92,6 +94,5 @@ if uploaded:
                 file_name="passport_photo.jpg",
                 mime="image/jpeg"
             )
-
 else:
     st.info("👆 Upload a clear, front-facing portrait photo.")
