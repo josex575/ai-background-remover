@@ -1,6 +1,6 @@
 import streamlit as st
 from rembg import remove
-from PIL import Image, ImageOps, ImageFilter
+from PIL import Image, ImageOps
 import numpy as np
 import io
 import cv2
@@ -60,7 +60,6 @@ def crop_based_on_type(image, face_box, photo_type, subject_type):
         bottom_margin = int(h * 0.12)
         side_margin = w // 8
     elif subject_type == "Woman":
-        # More space for hair around head
         top_margin = int(h * 0.6)
         bottom_margin = int(h * 0.25)
         side_margin = int(w * 0.25)
@@ -131,7 +130,7 @@ if uploaded:
     with st.spinner("🪄 Processing photo..."):
         face_box = detect_face(image)
         if face_box is None:
-            st.error("😕 No face detected. Please upload a clear, front-facing portrait photo.")
+            st.error("😕 No face detected. Please upload a clear front-facing portrait photo.")
         else:
             face_box = tuple(map(int, face_box))
 
@@ -144,12 +143,30 @@ if uploaded:
 
             st.image(final, caption=f"✅ {subject_type} ({photo_type}) Passport Photo (630×810 px)", use_container_width=True)
 
+            # ---- Download original photo ----
             buf = io.BytesIO()
             final.save(buf, format="JPEG", quality=95)
             st.download_button(
                 label="💾 Download Passport Photo",
                 data=buf.getvalue(),
                 file_name=f"{subject_type.lower()}_{photo_type.lower().replace(' ', '_')}_passport_photo.jpg",
+                mime="image/jpeg"
+            )
+
+            # ---- Add light border version ----
+            border_width = 15  # pixels
+            border_color = (200, 200, 200)  # light gray
+            final_with_border = ImageOps.expand(final, border=border_width, fill=border_color)
+
+            st.image(final_with_border, caption="✅ Passport Photo with Light Border", use_container_width=True)
+
+            # Download button for bordered image
+            buf_border = io.BytesIO()
+            final_with_border.save(buf_border, format="JPEG", quality=95)
+            st.download_button(
+                label="💾 Download Photo with Light Border",
+                data=buf_border.getvalue(),
+                file_name=f"{subject_type.lower()}_{photo_type.lower().replace(' ', '_')}_bordered_photo.jpg",
                 mime="image/jpeg"
             )
 else:
