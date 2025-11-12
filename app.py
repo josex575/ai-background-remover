@@ -1,6 +1,6 @@
 import streamlit as st
 from rembg import remove
-from PIL import Image, ImageOps
+from PIL import Image, ImageOps, ImageDraw
 import numpy as np
 import io
 import cv2
@@ -50,12 +50,10 @@ def crop_based_on_type(image, face_box, photo_type, subject_type):
     np_img = np.array(image)
     img_h, img_w = np_img.shape[:2]
 
-    # cm → pixels (300 DPI)
     dpi = 300
     cm2px = dpi / 2.54
     top_margin = int(2 * cm2px)
 
-    # Subject-specific adjustments
     if subject_type == "Man":
         bottom_margin = int(h * 0.12)
         side_margin = w // 8
@@ -71,11 +69,9 @@ def crop_based_on_type(image, face_box, photo_type, subject_type):
         bottom_margin = int(h * 0.1)
         side_margin = w // 8
 
-    # Add beard margin
     if photo_type == "With Beard":
         bottom_margin += int(2 * cm2px)
 
-    # Compute crop area
     x1 = max(x - side_margin, 0)
     x2 = min(x + w + side_margin, img_w)
     y1 = max(y - top_margin, 0)
@@ -83,7 +79,6 @@ def crop_based_on_type(image, face_box, photo_type, subject_type):
 
     cropped = image.crop((x1, y1, x2, y2))
 
-    # Adjust to 4:5 ratio
     target_ratio = 4 / 5
     cw, ch = cropped.size
     ratio = cw / ch
@@ -101,17 +96,12 @@ def crop_based_on_type(image, face_box, photo_type, subject_type):
 
 # ---- BACKGROUND REMOVAL ----
 def replace_background_with_white(image, subject_type):
-    """
-    Removes background.
-    For women: soften the edges around hair to preserve strands.
-    """
+    """Removes background. For women: soften the edges around hair."""
     removed = remove(image)
     np_img = np.array(removed)
 
     if np_img.shape[2] == 4:
         alpha = np_img[:, :, 3]
-
-        # For women → blur alpha to keep soft hair edges
         if subject_type == "Woman":
             alpha = cv2.GaussianBlur(alpha, (7, 7), 3)
 
@@ -121,6 +111,18 @@ def replace_background_with_white(image, subject_type):
         return Image.fromarray(composite.astype(np.uint8))
     else:
         return image
+
+# ---- ADD THIN CUT LINE BORDER ----
+def add_thin_border(image, line_color=(150, 150, 150), line_width=2):
+    bordered = image.copy()
+    draw = ImageDraw.Draw(bordered)
+    w, h = bordered.size
+    draw.rectangle(
+        [(line_width // 2, line_width // 2), (w - line_width // 2, h - line_width // 2)],
+        outline=line_color,
+        width=line_width
+    )
+    return bordered
 
 # ---- MAIN APP ----
 if uploaded:
@@ -153,20 +155,18 @@ if uploaded:
                 mime="image/jpeg"
             )
 
-            # ---- Add light border version ----
-            border_width = 15  # pixels
-            border_color = (200, 200, 200)  # light gray
-            final_with_border = ImageOps.expand(final, border=border_width, fill=border_color)
+            # ---- Add thin cut line border ----
+            final_with_border = add_thin_border(final, line_color=(150, 150, 150), line_width=2)
 
-            st.image(final_with_border, caption="✅ Passport Photo with Light Border", use_container_width=True)
+            st.image(final_with_border, caption="✂️ Passport Photo with Thin Print Border", use_container_width=True)
 
             # Download button for bordered image
             buf_border = io.BytesIO()
             final_with_border.save(buf_border, format="JPEG", quality=95)
             st.download_button(
-                label="💾 Download Photo with Light Border",
+                label="💾 Download Photo with Thin Border (Cut Line)",
                 data=buf_border.getvalue(),
-                file_name=f"{subject_type.lower()}_{photo_type.lower().replace(' ', '_')}_bordered_photo.jpg",
+                file_name=f"{subject_type.lower()}_{photo_type.lower().replace(' ', '_')}_cutline_photo.jpg",
                 mime="image/jpeg"
             )
 else:
