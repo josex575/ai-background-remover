@@ -87,23 +87,45 @@ def crop_based_on_type(image, face_box, photo_type, subject_type):
 
     return cropped
 
-# ---- BACKGROUND REMOVAL ----
-def replace_background_with_white(image, subject_type):
-    """Removes background. For women: soften the edges around hair."""
-    removed = remove(image)
-    np_img = np.array(removed)
+# ---- BACKGROUND CLEANING ----
+def clean_background(image, subject_type):
+    """For women → lighten & whiten background softly. Others → remove and replace with white."""
+    np_img = np.array(image.convert("RGB"))
 
-    if np_img.shape[2] == 4:
-        alpha = np_img[:, :, 3]
-        if subject_type == "Woman":
-            alpha = cv2.GaussianBlur(alpha, (7, 7), 3)
+    if subject_type == "Woman":
+        # Convert to LAB for lightness manipulation
+        lab = cv2.cvtColor(np_img, cv2.COLOR_RGB2LAB)
+        L, A, B = cv2.split(lab)
 
-        white_bg = np.ones_like(np_img[:, :, :3]) * 255
-        alpha_factor = alpha[:, :, np.newaxis] / 255.0
-        composite = white_bg * (1 - alpha_factor) + np_img[:, :, :3] * alpha_factor
-        return Image.fromarray(composite.astype(np.uint8))
+        # Increase lightness slightly everywhere
+        L = cv2.add(L, 25)
+        L = np.clip(L, 0, 255)
+
+        # Merge and convert back to RGB
+        lab = cv2.merge((L, A, B))
+        brightened = cv2.cvtColor(lab, cv2.COLOR_LAB2RGB)
+
+        # Slightly fade darker background areas toward white
+        mask = cv2.inRange(brightened, (180, 180, 180), (255, 255, 255))
+        mask_inv = cv2.bitwise_not(mask)
+        white_bg = np.full_like(brightened, 255)
+        cleaned = cv2.addWeighted(brightened, 0.9, white_bg, 0.1, 0)
+        result = np.where(mask_inv[..., None] > 0, cleaned, brightened)
+        return Image.fromarray(result.astype(np.uint8))
+
     else:
-        return image
+        # Normal background removal for others
+        removed = remove(image)
+        np_removed = np.array(removed)
+
+        if np_removed.shape[2] == 4:
+            alpha = np_removed[:, :, 3]
+            white_bg = np.ones_like(np_removed[:, :, :3]) * 255
+            alpha_factor = alpha[:, :, np.newaxis] / 255.0
+            composite = white_bg * (1 - alpha_factor) + np_removed[:, :, :3] * alpha_factor
+            return Image.fromarray(composite.astype(np.uint8))
+        else:
+            return image
 
 # ---- ADD THIN CUT LINE BORDER ----
 def add_thin_border(image, line_color=(100, 100, 100), line_width=1):
@@ -130,12 +152,11 @@ if uploaded:
             face_box = tuple(map(int, face_box))
 
             cropped = crop_based_on_type(image, face_box, photo_type, subject_type)
-            final = replace_background_with_white(cropped, subject_type)
+            final = clean_background(cropped, subject_type)
             final = ImageOps.autocontrast(final)
 
             # --- Photo 1: 630×810 px ---
             final_630x810 = final.resize((630, 810), Image.LANCZOS)
-
             st.image(final_630x810, caption=f"✅ {subject_type} ({photo_type}) Passport Photo (630×810 px)", use_container_width=True)
 
             buf = io.BytesIO()
