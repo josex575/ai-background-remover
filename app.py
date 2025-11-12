@@ -10,7 +10,7 @@ st.set_page_config(page_title="AI Passport Photo Maker", layout="centered")
 st.title("🪄 AI Passport Photo Maker")
 st.markdown("""
 Upload a portrait photo and choose the correct options below.  
-The AI will crop, clean, and prepare passport-style photos (630×810 px and 2×2 inch).
+The AI will crop, clean, and prepare passport-style photos (630×810 px and 2×2 inch @ 300 DPI).
 """)
 
 # ---- USER OPTIONS ----
@@ -89,32 +89,24 @@ def crop_based_on_type(image, face_box, photo_type, subject_type):
 
 # ---- BACKGROUND CLEANING ----
 def clean_background(image, subject_type):
-    """For women → lighten & whiten background softly. Others → remove and replace with white."""
+    """For women → whiten softly without cutting hair; for others → full background removal."""
     np_img = np.array(image.convert("RGB"))
 
     if subject_type == "Woman":
-        # Convert to LAB for lightness manipulation
         lab = cv2.cvtColor(np_img, cv2.COLOR_RGB2LAB)
         L, A, B = cv2.split(lab)
-
-        # Increase lightness slightly everywhere
         L = cv2.add(L, 25)
         L = np.clip(L, 0, 255)
-
-        # Merge and convert back to RGB
         lab = cv2.merge((L, A, B))
         brightened = cv2.cvtColor(lab, cv2.COLOR_LAB2RGB)
 
-        # Slightly fade darker background areas toward white
         mask = cv2.inRange(brightened, (180, 180, 180), (255, 255, 255))
         mask_inv = cv2.bitwise_not(mask)
         white_bg = np.full_like(brightened, 255)
         cleaned = cv2.addWeighted(brightened, 0.9, white_bg, 0.1, 0)
         result = np.where(mask_inv[..., None] > 0, cleaned, brightened)
         return Image.fromarray(result.astype(np.uint8))
-
     else:
-        # Normal background removal for others
         removed = remove(image)
         np_removed = np.array(removed)
 
@@ -127,7 +119,7 @@ def clean_background(image, subject_type):
         else:
             return image
 
-# ---- ADD THIN CUT LINE BORDER ----
+# ---- ADD THIN CUT-LINE BORDER ----
 def add_thin_border(image, line_color=(100, 100, 100), line_width=1):
     bordered = image.copy()
     draw = ImageDraw.Draw(bordered)
@@ -162,20 +154,20 @@ if uploaded:
             buf = io.BytesIO()
             final_630x810.save(buf, format="JPEG", quality=95)
             st.download_button(
-                label="💾 Download 630×810 Passport Photo",
+                label="💾 Download 630×810 px Passport Photo",
                 data=buf.getvalue(),
                 file_name=f"{subject_type.lower()}_{photo_type.lower().replace(' ', '_')}_passport_photo_630x810.jpg",
                 mime="image/jpeg"
             )
 
-            # --- Photo 2: 2×2 inch (600×600 px) with thin border ---
+            # --- Photo 2: 2×2 inch (600×600 px @ 300 DPI) with thin cut-line border ---
             final_2x2 = final.resize((600, 600), Image.LANCZOS)
-            final_with_border = add_thin_border(final_2x2, line_color=(120, 120, 120), line_width=1)
+            final_with_border = add_thin_border(final_2x2, line_color=(100, 100, 100), line_width=1)
 
-            st.image(final_with_border, caption="✂️ 2×2 inch Passport Photo (600×600 px) with Thin Print Border", use_container_width=True)
+            st.image(final_with_border, caption="✂️ 2×2 inch Photo (600×600 px @ 300 DPI) with Thin Border", use_container_width=True)
 
             buf_border = io.BytesIO()
-            final_with_border.save(buf_border, format="JPEG", quality=95)
+            final_with_border.save(buf_border, format="JPEG", quality=95, dpi=(300, 300))
             st.download_button(
                 label="💾 Download 2×2 inch Photo (With Thin Border)",
                 data=buf_border.getvalue(),
