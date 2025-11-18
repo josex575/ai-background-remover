@@ -1,6 +1,5 @@
 streamlit
-rembg
 opencv-python-headless
-pillow
+Pillow
 numpy
 streamlit-cropper
