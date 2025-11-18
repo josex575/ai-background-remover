@@ -1,5 +1,6 @@
-streamlit
-rembg
-pillow
-numpy
-onnxruntime
+streamlit==1.40.0
+Pillow==11.0.0
+reportlab==4.2.5
+numpy==1.26.4
+streamlit-cropper==0.5.0
+
