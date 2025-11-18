@@ -1,143 +1,178 @@
 import streamlit as st
-from PIL import Image, ImageOps, ImageFilter, ImageDraw
+from rembg import remove
+from PIL import Image, ImageOps, ImageDraw
 import numpy as np
-import cv2
 import io
+import cv2
 
 st.set_page_config(page_title="AI Passport Photo Maker", layout="centered")
-st.title("AI Passport Photo Maker — Cloud-friendly")
-st.markdown("Auto-crop + background removal using OpenCV + manual crop sliders. No incompatible libraries.")
 
-# ---------------- UI ----------------
-photo_type = st.selectbox("Photo Type", ["Without Beard", "With Beard"])
-subject_type = st.selectbox("Subject Type", ["Man", "Woman", "Baby"])
-uploaded = st.file_uploader("Upload your portrait photo", type=["jpg", "jpeg", "png"])
+st.title("🪄 AI Passport Photo Maker")
+st.markdown("""
+Upload a portrait photo and choose the correct options below.  
+The AI will crop, clean, and prepare passport-style photos (630×810 px and 2×2 inch @ 300 DPI).
+""")
 
-# ---------------- Helpers ----------------
-def pil_to_cv(img):
-    return cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
+# ---- USER OPTIONS ----
+photo_type = st.selectbox(
+    "🧔 Photo Type",
+    ["Without Beard", "With Beard"]
+)
 
-def cv_to_pil(img):
-    return Image.fromarray(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
+subject_type = st.selectbox(
+    "👤 Subject Type",
+    ["Man", "Woman", "Baby"]
+)
 
-def detect_face(pil_img):
-    gray = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2GRAY)
+uploaded = st.file_uploader("📸 Upload a clear, front-facing portrait photo", type=["jpg", "jpeg", "png"])
+
+# ---- FACE DETECTION ----
+def detect_face(image):
+    """Detects the largest face and returns (x, y, w, h)."""
+    np_img = np.array(image.convert("RGB"))
+    gray = cv2.cvtColor(np_img, cv2.COLOR_RGB2GRAY)
     face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
     faces = face_cascade.detectMultiScale(gray, 1.1, 4)
     if len(faces) == 0:
         return None
-    return max(faces, key=lambda r: r[2]*r[3])
+    return max(faces, key=lambda rect: rect[2] * rect[3])
 
-def ai_crop(img, face_box, subject_type, beard=False):
+# ---- SMART CROPPING ----
+def crop_based_on_type(image, face_box, photo_type, subject_type):
     x, y, w, h = face_box
-    img_w, img_h = img.size
+    np_img = np.array(image)
+    img_h, img_w = np_img.shape[:2]
 
-    # Default margins
-    top = int(h*0.9)
-    bottom = int(h*0.45)
-    sides = int(w*0.55)
-    if beard:
-        bottom += int(h*0.25)
-    if subject_type == "Woman":
-        top = int(h*1.2)
-        sides = int(w*0.7)
-        bottom = int(h*0.45)
-    if subject_type == "Baby":
-        top = int(h*0.7)
-        sides = int(w*0.45)
-        bottom = int(h*0.5)
+    dpi = 300
+    cm2px = dpi / 2.54
+    top_margin = int(2 * cm2px)
 
-    x1 = max(0, x-sides)
-    y1 = max(0, y-top)
-    x2 = min(img_w, x+w+sides)
-    y2 = min(img_h, y+h+bottom)
-    cropped = img.crop((x1, y1, x2, y2))
+    if subject_type == "Man":
+        bottom_margin = int(h * 0.12)
+        side_margin = w // 8
+    elif subject_type == "Woman":
+        top_margin = int(h * 0.6)
+        bottom_margin = int(h * 0.25)
+        side_margin = int(w * 0.25)
+    elif subject_type == "Baby":
+        top_margin = int(h * 0.3)
+        bottom_margin = int(h * 0.25)
+        side_margin = int(w * 0.2)
+    else:
+        bottom_margin = int(h * 0.1)
+        side_margin = w // 8
 
-    # Pad to 4:5 ratio
+    if photo_type == "With Beard":
+        bottom_margin += int(2 * cm2px)
+
+    x1 = max(x - side_margin, 0)
+    x2 = min(x + w + side_margin, img_w)
+    y1 = max(y - top_margin, 0)
+    y2 = min(y + h + bottom_margin, img_h)
+
+    cropped = image.crop((x1, y1, x2, y2))
+
+    target_ratio = 4 / 5
     cw, ch = cropped.size
-    target_ratio = 4/5
-    if cw/ch > target_ratio:
-        new_h = int(round(cw/target_ratio))
-        pad = new_h - ch
-        cropped = ImageOps.expand(cropped, border=(0,pad//2), fill="white")
-    else:
-        new_w = int(round(ch*target_ratio))
-        pad = new_w - cw
-        cropped = ImageOps.expand(cropped, border=(pad//2,0), fill="white")
+    ratio = cw / ch
+
+    if ratio > target_ratio:
+        new_h = int(cw / target_ratio)
+        pad_h = new_h - ch
+        cropped = ImageOps.expand(cropped, border=(0, pad_h // 2), fill="white")
+    elif ratio < target_ratio:
+        new_w = int(ch * target_ratio)
+        pad_w = new_w - cw
+        cropped = ImageOps.expand(cropped, border=(pad_w // 2, 0), fill="white")
+
     return cropped
 
-def grabcut_bg(img, face_box):
-    arr = np.array(img.convert("RGB"))
-    h, w = arr.shape[:2]
-    fx, fy, fw, fh = face_box
-    pad_x = int(fw*0.9)
-    pad_y_top = int(fh*1.0)
-    pad_y_bottom = int(fh*1.2)
-    rect = (max(0, fx-pad_x), max(0, fy-pad_y_top), min(w-1, fx+fw+pad_x)-max(0, fx-pad_x), min(h-1, fy+fh+pad_y_bottom)-max(0, fy-pad_y_top))
-    mask = np.zeros(arr.shape[:2], np.uint8)
-    bgd = np.zeros((1,65), np.float64)
-    fgd = np.zeros((1,65), np.float64)
-    try:
-        cv2.grabCut(arr, mask, rect, bgd, fgd, 5, cv2.GC_INIT_WITH_RECT)
-    except:
-        return Image.new("RGB", img.size, "white")
-    mask2 = np.where((mask==2)|(mask==0),0,1).astype('uint8')
-    fg = arr*mask2[:,:,np.newaxis]
-    # Feather edges
-    mask_f = cv2.GaussianBlur(mask2.astype(np.float32),(7,7),0)[...,np.newaxis]
-    white_bg = np.ones_like(arr)*255
-    comp = (arr*mask_f + white_bg*(1-mask_f)).astype(np.uint8)
-    return Image.fromarray(comp)
+# ---- BACKGROUND CLEANING ----
+def clean_background(image, subject_type):
+    """For women → whiten softly without cutting hair; for others → full background removal."""
+    np_img = np.array(image.convert("RGB"))
 
-def enhance(img):
-    img = ImageOps.autocontrast(img, cutoff=1)
-    img = img.filter(ImageFilter.UnsharpMask(radius=1, percent=120, threshold=3))
-    return img
+    if subject_type == "Woman":
+        lab = cv2.cvtColor(np_img, cv2.COLOR_RGB2LAB)
+        L, A, B = cv2.split(lab)
+        L = cv2.add(L, 25)
+        L = np.clip(L, 0, 255)
+        lab = cv2.merge((L, A, B))
+        brightened = cv2.cvtColor(lab, cv2.COLOR_LAB2RGB)
 
-def add_border(img, color=(120,120,120), width=1):
-    draw = ImageDraw.Draw(img)
-    w,h = img.size
-    draw.rectangle([0.5,0.5,w-0.5,h-0.5], outline=color, width=width)
-    return img
-
-def manual_crop(img):
-    st.subheader("Manual Crop (Original)")
-    w,h = img.size
-    left = st.slider("Left",0,w-1,0)
-    top = st.slider("Top",0,h-1,0)
-    crop_w = st.slider("Width",50,w-left,min(300,w-left))
-    crop_h = st.slider("Height",50,h-top,min(300,h-top))
-    cropped = img.crop((left,top,left+crop_w,top+crop_h))
-    st.image(cropped, caption="Preview", use_column_width=True)
-    return cropped
-
-# ---------------- Main ----------------
-if uploaded is not None:
-    original = Image.open(uploaded).convert("RGB")
-    st.subheader("Original")
-    st.image(original, use_column_width=True)
-
-    # AI passport photo
-    st.header("AI Passport Photo (630x810 px)")
-    face = detect_face(original)
-    if face is None:
-        st.error("Face not detected. Use manual crop.")
+        mask = cv2.inRange(brightened, (180, 180, 180), (255, 255, 255))
+        mask_inv = cv2.bitwise_not(mask)
+        white_bg = np.full_like(brightened, 255)
+        cleaned = cv2.addWeighted(brightened, 0.9, white_bg, 0.1, 0)
+        result = np.where(mask_inv[..., None] > 0, cleaned, brightened)
+        return Image.fromarray(result.astype(np.uint8))
     else:
-        beard_flag = (photo_type=="With Beard")
-        cropped = ai_crop(original, face, subject_type, beard_flag)
-        bg_removed = grabcut_bg(cropped, face)
-        enhanced = enhance(bg_removed)
-        final_ai = enhanced.resize((630,810), Image.LANCZOS)
-        final_ai = add_border(final_ai)
-        st.image(final_ai, caption="AI Passport Photo")
-        buf = io.BytesIO()
-        final_ai.save(buf,"JPEG",quality=95)
-        st.download_button("Download AI Passport Photo (630x810)", buf.getvalue(), file_name="passport_ai_630x810.jpg", mime="image/jpeg")
+        removed = remove(image)
+        np_removed = np.array(removed)
 
-    # Manual crop
-    st.header("Manual Crop Tool")
-    manual = manual_crop(original)
-    if manual:
-        manual_resized = manual.resize((630,810), Image.LANCZOS)
-        buf2 = io.BytesIO(); manual_resized.save(buf2,"JPEG",quality=95)
-        st.download_button("Download Manual Crop (630x810)", buf2.getvalue(), file_name="manual_630x810.jpg", mime="image/jpeg")
+        if np_removed.shape[2] == 4:
+            alpha = np_removed[:, :, 3]
+            white_bg = np.ones_like(np_removed[:, :, :3]) * 255
+            alpha_factor = alpha[:, :, np.newaxis] / 255.0
+            composite = white_bg * (1 - alpha_factor) + np_removed[:, :, :3] * alpha_factor
+            return Image.fromarray(composite.astype(np.uint8))
+        else:
+            return image
+
+# ---- ADD THIN CUT-LINE BORDER ----
+def add_thin_border(image, line_color=(100, 100, 100), line_width=1):
+    bordered = image.copy()
+    draw = ImageDraw.Draw(bordered)
+    w, h = bordered.size
+    draw.rectangle(
+        [(line_width // 2, line_width // 2), (w - line_width // 2, h - line_width // 2)],
+        outline=line_color,
+        width=line_width
+    )
+    return bordered
+
+# ---- MAIN APP ----
+if uploaded:
+    image = Image.open(uploaded)
+    st.image(image, caption="Original Photo", use_container_width=True)
+
+    with st.spinner("🪄 Processing photo..."):
+        face_box = detect_face(image)
+        if face_box is None:
+            st.error("😕 No face detected. Please upload a clear front-facing portrait photo.")
+        else:
+            face_box = tuple(map(int, face_box))
+
+            cropped = crop_based_on_type(image, face_box, photo_type, subject_type)
+            final = clean_background(cropped, subject_type)
+            final = ImageOps.autocontrast(final)
+
+            # --- Photo 1: 630×810 px ---
+            final_630x810 = final.resize((630, 810), Image.LANCZOS)
+            st.image(final_630x810, caption=f"✅ {subject_type} ({photo_type}) Passport Photo (630×810 px)", use_container_width=True)
+
+            buf = io.BytesIO()
+            final_630x810.save(buf, format="JPEG", quality=95)
+            st.download_button(
+                label="💾 Download 630×810 px Passport Photo",
+                data=buf.getvalue(),
+                file_name=f"{subject_type.lower()}_{photo_type.lower().replace(' ', '_')}_passport_photo_630x810.jpg",
+                mime="image/jpeg"
+            )
+
+            # --- Photo 2: 2×2 inch (600×600 px @ 300 DPI) with thin cut-line border ---
+            final_2x2 = final.resize((600, 600), Image.LANCZOS)
+            final_with_border = add_thin_border(final_2x2, line_color=(100, 100, 100), line_width=1)
+
+            st.image(final_with_border, caption="✂️ 2×2 inch Photo (600×600 px @ 300 DPI) with Thin Border", use_container_width=True)
+
+            buf_border = io.BytesIO()
+            final_with_border.save(buf_border, format="JPEG", quality=95, dpi=(300, 300))
+            st.download_button(
+                label="💾 Download 2×2 inch Photo (With Thin Border)",
+                data=buf_border.getvalue(),
+                file_name=f"{subject_type.lower()}_{photo_type.lower().replace(' ', '_')}_2x2_border_photo.jpg",
+                mime="image/jpeg"
+            )
+else:
+    st.info("👆 Upload a clear, front-facing portrait photo.")
